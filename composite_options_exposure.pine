@@ -1,0 +1,890 @@
+//@version=6
+// Author: Zahra Talan
+// Composite Options Exposure - INTELLIGENT MAGNET v7.4
+// Build: Dec 12, 2025 (Clear SKEW Language + Table Updates Independent of Profile)
+
+indicator("Composite Options Exposure (Intelligent) v7.4b",
+     overlay=true,
+     max_lines_count=500,
+     max_labels_count=500)
+
+// ================= Display Settings
+groupMain = "Display Settings"
+
+showProfile = input.bool(true, "Show Exposure Profile", group=groupMain)
+profileBars = input.int(40, "Profile Width RIGHT (bars)", minval=10, maxval=150, group=groupMain)
+profileBarsLeft = input.int(100, "Profile Width LEFT (bars)", minval=20, maxval=300, group=groupMain)
+minExposure = input.float(0.30, "Min Exposure to Display (% of max)", minval=0.05, maxval=1.00, step=0.05, group=groupMain)
+snapToES5 = input.bool(true, "Snap mapped strikes to ES 5-pt grid", group=groupMain)
+
+showOnlyWindow = input.bool(true, "Only show levels within a price window", group=groupMain)
+windowPts = input.int(120, "Window half-width (ES points)", minval=5, maxval=500, group=groupMain)
+
+useTopPercentile = input.bool(true, "Use Top Percentile Filter (keeps largest N%)", group=groupMain)
+topPercent = input.float(5.0, "Top Percentile to Display (%)", minval=1, maxval=100, step=1, group=groupMain)
+
+clusterLines = input.bool(true, "Cluster nearby minor levels", group=groupMain)
+clusterDistPts = input.int(2, "Cluster distance (pts)", minval=1, maxval=20, group=groupMain)
+clusterMinRatio = input.float(0.35, "Cluster skip threshold", minval=0.05, maxval=1.0, step=0.05, group=groupMain)
+
+callColorBase = input.color(color.new(color.lime, 0), "Call exposure color", group=groupMain)
+putColorBase = input.color(color.new(color.red, 0), "Put exposure color", group=groupMain)
+
+// ================= Magnet Logic
+groupMag = "Magnet Logic (Smart Filter)"
+useMagFilter = input.bool(true, "Filter Magnets based on Flow?", group=groupMag)
+magBiasThresh = input.int(20, "Bias Threshold (+/-)", tooltip="If Bias is worse than this against the magnet direction, kill the signal.", group=groupMag)
+
+// ================= Instrument weights
+groupInstruments = "Instrument Weights"
+wES = input.float(1.00, "ES weight", minval=0.0, maxval=5.0, step=0.05, group=groupInstruments)
+wSPX = input.float(0.80, "SPX weight", minval=0.0, maxval=5.0, step=0.05, group=groupInstruments)
+wSPY = input.float(0.45, "SPY weight", minval=0.0, maxval=5.0, step=0.05, group=groupInstruments)
+wNQ = input.float(0.50, "NQ weight", minval=0.0, maxval=5.0, step=0.05, group=groupInstruments)
+
+// ================= Strike mappings
+groupMap = "Strike Mapping"
+nqToES = input.float(0.268, "NQ -> ES ratio", minval=0.10, maxval=0.60, step=0.001, group=groupMap)
+spyToES = input.float(10.0, "SPY -> ES ratio", minval=5.00, maxval=15.0, step=0.1, group=groupMap)
+spxToES = input.float(1.00, "SPX -> ES ratio", minval=0.90, maxval=1.10, step=0.01, group=groupMap)
+
+// ================= VIX Settings
+groupVIX = "VIX Settings"
+vixSymbol = input.string("CBOE:VIX", "VIX symbol", group=groupVIX)
+
+// ================= Wall Detection
+groupWalls = "Wall Detection"
+wallStrengthPct = input.float(0.50, "Wall strength threshold (%)", minval=0.20, maxval=0.90, step=0.05, group=groupWalls)
+pinRadiusPts = input.int(25, "Pin radius (pts)", minval=5, maxval=200, group=groupWalls)
+showWallLines = input.bool(true, "Draw wall lines", group=groupWalls)
+
+// ================= Data Overrides
+groupData = "Data Overrides"
+useOverrides = input.bool(true, "Use pasted datasets", group=groupData)
+buildKey = input.int(0, "Rebuild key", group=groupData)
+
+// ================= TODAY'S DATA (Dec 12, 2025)
+
+// ES
+esStrikesDefault = "6715.0, 6720.0, 6725.0, 6730.0, 6735.0, 6740.0, 6745.0, 6750.0, 6755.0, 6760.0, 6765.0, 6770.0, 6775.0, 6780.0, 6785.0, 6790.0, 6795.0, 6800.0, 6805.0, 6810.0, 6815.0, 6820.0, 6825.0, 6830.0, 6835.0, 6840.0, 6845.0, 6850.0, 6855.0, 6860.0, 6865.0, 6870.0, 6875.0, 6880.0, 6885.0, 6890.0, 6895.0, 6900.0, 6905.0, 6910.0, 6915.0, 6920.0, 6925.0, 6930.0, 6935.0, 6940.0, 6945.0, 6950.0, 6955.0, 6960.0, 6965.0, 6970.0, 6975.0, 6980.0, 6985.0"
+esCallsDefault = "162.55, 0.0, 38.67, 145.84, 0.0, 100.92, 0.0, 60.79, 165.12, 215.45, 116.77, 0.0, 225.88, 724.91, 357.62, 589.83, 166.65, 2876.77, 460.48, 1257.55, 1213.4, 2743.07, 2270.61, 2663.22, 1719.94, 3730.11, 3322.25, 2170.94, 1146.94, 7200.23, 6541.74, 36045.51, 40972.98, 49532.25, 43159.52, 138176.23, 106593.2, 315720.49, 311346.98, 174186.63, 354657.51, 134443.25, 220022.19, 74915.89, 81360.23, 39392.04, 48949.68, 51939.93, 16930.3, 20221.88, 5227.48, 43094.65, 35825.41, 2017.63, 55766.81"
+esPutsDefault = "32423.53, 36153.27, 18676.12, 15759.07, 23150.88, 6423.22, 2138.17, 33561.77, 9953.49, 5169.52, 6741.4, 14616.58, 21522.84, 36219.02, 40609.98, 26744.91, 32297.07, 140768.7, 47284.5, 48772.93, 57861.59, 76536.24, 99200.67, 120465.14, 81013.67, 60215.94, 30385.77, 46668.11, 9923.38, 41174.38, 67681.97, 104188.58, 258996.67, 168545.92, 112043.07, 130551.08, 115871.48, 251616.79, 87514.34, 44337.22, 28330.53, 13590.29, 9256.81, 5374.07, 2250.83, 1774.61, 314.17, 2135.65, 90.86, 33.59, 0.0, 0.0, 25.99, 117.09, 0.0"
+
+// SPX
+spxStrikesDefault = "6550.0, 6555.0, 6560.0, 6565.0, 6570.0, 6575.0, 6580.0, 6585.0, 6590.0, 6595.0, 6600.0, 6605.0, 6610.0, 6615.0, 6620.0, 6625.0, 6630.0, 6635.0, 6640.0, 6645.0, 6650.0, 6655.0, 6660.0, 6665.0, 6670.0, 6675.0, 6680.0, 6685.0, 6690.0, 6695.0, 6700.0, 6705.0, 6710.0, 6715.0, 6720.0, 6725.0, 6730.0, 6735.0, 6740.0, 6745.0, 6750.0, 6755.0, 6760.0, 6765.0, 6770.0, 6775.0, 6780.0, 6785.0, 6790.0, 6795.0, 6800.0, 6805.0, 6810.0, 6815.0, 6820.0, 6825.0, 6830.0, 6835.0, 6840.0, 6845.0, 6850.0, 6855.0, 6860.0, 6865.0, 6870.0, 6875.0, 6880.0, 6885.0, 6890.0, 6895.0, 6900.0, 6905.0, 6910.0, 6915.0, 6920.0, 6925.0, 6930.0, 6935.0, 6940.0, 6945.0, 6950.0"
+spxCallsDefault = "5438.28, 1353.15, 2778.37, 399.18, 4416.28, 3634.28, 2785.14, 1692.57, 1409.03, 2126.13, 6178.92, 717.25, 2465.43, 2782.93, 11686.76, 2204.73, 10660.35, 1798.06, 7049.75, 8411.91, 21530.08, 2161.06, 5756.09, 6371.07, 47981.85, 2410.61, 4129.63, 1318.92, 6434.87, 7206.51, 34762.04, 14043.34, 4216.22, 11490.91, 15010.65, 10364.47, 15259.22, 14663.51, 11048.36, 17783.11, 57935.8, 48629.77, 27646.96, 7670.2, 23456.23, 18313.27, 27411.33, 17435.01, 14679.53, 5328.74, 34885.43, 7692.25, 16310.29, 1947.23, 1040.41, 10125.44, 18509.91, 15031.65, 40886.14, 42314.48, 144566.98, 43772.88, 82614.28, 108252.34, 76732.73, 169885.09, 206296.18, 121736.22, 152278.93, 87658.8, 319912.96, 65108.05, 93227.03, 65317.77, 104601.73, 160447.3, 103336.69, 65109.87, 66138.91, 36198.97, 164847.42"
+spxPutsDefault = "46052.89, 5357.83, 4365.37, 3966.92, 11212.43, 12834.34, 28211.56, 3825.81, 26501.42, 24119.34, 113786.65, 4180.15, 5487.74, 22471.69, 22698.23, 44401.99, 8738.38, 15643.28, 60216.63, 100492.8, 263716.92, 97244.59, 47029.29, 39392.89, 26216.78, 39630.75, 84635.11, 20713.22, 121486.23, 34718.24, 473258.37, 30082.58, 47250.75, 207011.23, 152806.83, 174377.2, 47959.99, 58912.49, 92503.81, 73261.78, 736868.69, 146802.63, 214183.99, 165464.18, 326216.52, 212860.83, 208919.35, 149925.06, 131734.64, 83220.59, 222290.09, 43496.16, 50026.71, 11280.95, 10268.79, 48748.55, 70069.1, 66403.46, 147988.03, 106189.95, 363744.86, 83478.19, 126513.73, 50300.59, 139518.45, 141606.96, 90292.42, 100094.33, 113828.99, 5402.74, 188884.76, 1694.01, 20561.91, 565.69, 1593.57, 2027.37, 534.27, 187.06, 484.73, 133.43, 1059.58"
+
+// SPY
+spyStrikesDefault = "661.0, 662.0, 663.0, 664.0, 665.0, 666.0, 667.0, 668.0, 669.0, 670.0, 671.0, 672.0, 673.0, 674.0, 675.0, 676.0, 677.0, 678.0, 679.0, 680.0, 681.0, 682.0, 683.0, 684.0, 685.0, 686.0, 687.0, 688.0, 689.0, 690.0, 691.0, 692.0, 693.0, 694.0, 695.0, 696.0, 697.0, 698.0, 699.0, 700.0, 701.0"
+spyCallsDefault = "488.74, 266.11, 466.82, 297.07, 8039.76, 657.95, 813.07, 778.75, 684.12, 5657.54, 6386.92, 10803.75, 22069.8, 48874.37, 149060.89, 145775.28, 99871.97, 200248.84, 269705.3, 565625.6, 140253.57, 2076500.85, 3237270.02, 6904721.05, 13258622.2, 14584749.64, 13708460.98, 14011157.34, 11916904.56, 8285665.82, 2562832.46, 1488459.07, 897032.95, 197570.74, 233963.83, 53293.03, 42793.8, 254633.39, 7501.89, 23836.54, 2085.91"
+spyPutsDefault = "17447.35, 18940.0, 37817.77, 83273.58, 92996.28, 67126.8, 189606.84, 169497.22, 350586.72, 1315752.38, 609775.47, 960614.94, 1371141.15, 1818901.5, 2515911.93, 3218461.22, 2790115.14, 3579622.39, 2530196.12, 3273375.1, 417228.51, 3213230.04, 5483708.59, 10108551.68, 12662084.27, 9983005.53, 8242190.48, 7218308.37, 2129318.4, 1016568.47, 298352.34, 160896.22, 84482.11, 26688.56, 42753.77, 10866.96, 8646.16, 8512.88, 181.39, 5427.16, 262.04"
+
+// NQ
+nqStrikesDefault = "24750.0, 24800.0, 24850.0, 24900.0, 24950.0, 25000.0, 25050.0, 25100.0, 25150.0, 25200.0, 25250.0, 25300.0, 25350.0, 25400.0, 25450.0, 25500.0, 25550.0, 25600.0, 25650.0, 25700.0"
+nqCallsDefault = "183559.54, 9514.6, 0.0, 38653.74, 0.0, 135007.15, 106522.55, 559714.67, 1283160.03, 35481247.27, 15061983.75, 11862274.85, 5802389.89, 6458047.3, 4761069.88, 3978267.69, 3146185.8, 3503940.81, 2417353.6, 4478430.38"
+nqPutsDefault = "769069.87, 1940671.87, 337728.13, 1526625.23, 1053247.38, 8144616.98, 2011922.64, 7386259.22, 6252552.19, 23397137.68, 27740798.56, 20370509.35, 6119497.08, 10465924.82, 3785321.75, 10164923.59, 3061969.06, 1553634.91, 636717.4, 433040.04"
+
+// VIX
+vixStrikesDefault = "10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 13.0, 13.5, 14.0, 14.5, 15.0, 15.5, 16.0, 16.5, 17.0, 17.5, 18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0, 21.5, 22.0, 22.5, 23.0, 23.5, 24.0, 24.5, 25.0"
+vixCallsDefault = "5032.9, 1304.54, 145.03, 1318.67, 2184.28, 856.33, 2169.4, 189.57, 991.09, 1304.31, 12758.73, 4839.38, 19606.7, 60144.31, 34103.54, 6892.86, 72310.7, 46630.54, 128296.49, 131376.28, 660999.08, 148054.89, 392201.58, 167259.18, 401425.45, 99826.45, 209003.9, 98156.37, 482938.21, 44281.9, 668807.08"
+vixPutsDefault = "1825.16, 1121.05, 246.31, 350.95, 1045.29, 1282.18, 21708.51, 36492.3, 148708.07, 129818.54, 409124.3, 421677.41, 471533.1, 254928.08, 98493.09, 44991.92, 322944.16, 84699.5, 465814.32, 212099.05, 351389.1, 145104.12, 359878.81, 162991.62, 176876.41, 50553.71, 41119.16, 1496.19, 44550.21, 5507.67, 23962.74"
+
+// ================= CSV Inputs
+esStrikesStr = input.string(esStrikesDefault, "ES_Strikes CSV", group=groupData)
+esCallsStr = input.string(esCallsDefault, "ES_Call_Exposure CSV", group=groupData)
+esPutsStr = input.string(esPutsDefault, "ES_Put_Exposure CSV", group=groupData)
+
+spxStrikesStr = input.string(spxStrikesDefault, "SPX_Strikes CSV", group=groupData)
+spxCallsStr = input.string(spxCallsDefault, "SPX_Call_Exposure CSV", group=groupData)
+spxPutsStr = input.string(spxPutsDefault, "SPX_Put_Exposure CSV", group=groupData)
+
+spyStrikesStr = input.string(spyStrikesDefault, "SPY_Strikes CSV", group=groupData)
+spyCallsStr = input.string(spyCallsDefault, "SPY_Call_Exposure CSV", group=groupData)
+spyPutsStr = input.string(spyPutsDefault, "SPY_Put_Exposure CSV", group=groupData)
+
+nqStrikesStr = input.string(nqStrikesDefault, "NQ_Strikes CSV", group=groupData)
+nqCallsStr = input.string(nqCallsDefault, "NQ_Call_Exposure CSV", group=groupData)
+nqPutsStr = input.string(nqPutsDefault, "NQ_Put_Exposure CSV", group=groupData)
+
+vixStrikesStr = input.string(vixStrikesDefault, "VIX Strikes CSV", group=groupData)
+vixCallsStr = input.string(vixCallsDefault, "VIX Call_Exposure CSV", group=groupData)
+vixPutsStr = input.string(vixPutsDefault, "VIX Put_Exposure CSV", group=groupData)
+
+esStrikesCSV = useOverrides ? esStrikesStr : esStrikesDefault
+esCallsCSV = useOverrides ? esCallsStr : esCallsDefault
+esPutsCSV = useOverrides ? esPutsStr : esPutsDefault
+
+spxStrikesCSV = useOverrides ? spxStrikesStr : spxStrikesDefault
+spxCallsCSV = useOverrides ? spxCallsStr : spxCallsDefault
+spxPutsCSV = useOverrides ? spxPutsStr : spxPutsDefault
+
+spyStrikesCSV = useOverrides ? spyStrikesStr : spyStrikesDefault
+spyCallsCSV = useOverrides ? spyCallsStr : spyCallsDefault
+spyPutsCSV = useOverrides ? spyPutsStr : spyPutsDefault
+
+nqStrikesCSV = useOverrides ? nqStrikesStr : nqStrikesDefault
+nqCallsCSV = useOverrides ? nqCallsStr : nqCallsDefault
+nqPutsCSV = useOverrides ? nqPutsStr : nqPutsDefault
+
+vixStrikesCSV = useOverrides ? vixStrikesStr : vixStrikesDefault
+vixCallsCSV = useOverrides ? vixCallsStr : vixCallsDefault
+vixPutsCSV = useOverrides ? vixPutsStr : vixPutsDefault
+
+// ================= Utilities
+csv_to_float_array(s) =>
+    out = array.new_float()
+    if str.length(s) > 0
+        parts = str.split(s, ",")
+        sz = array.size(parts)
+        if sz > 0
+            for i = 0 to sz - 1
+                tok = str.trim(array.get(parts, i))
+                val = str.tonumber(tok)
+                array.push(out, na(val) ? 0.0 : val)
+    out
+
+max_abs(arr) =>
+    m = 0.0
+    sz = array.size(arr)
+    if sz > 0
+        for i = 0 to sz - 1
+            m := math.max(m, math.abs(array.get(arr, i)))
+    m
+
+sum_arr(arr) =>
+    s = 0.0
+    sz = array.size(arr)
+    if sz > 0
+        for i = 0 to sz - 1
+            s += array.get(arr, i)
+    s
+
+sum_abs_arr(arr) =>
+    s = 0.0
+    sz = array.size(arr)
+    if sz > 0
+        for i = 0 to sz - 1
+            s += math.abs(array.get(arr, i))
+    s
+
+net_from(callArr, putArr) =>
+    n = math.min(array.size(callArr), array.size(putArr))
+    out = array.new_float(n, 0.0)
+    if n > 0
+        for i = 0 to n - 1
+            array.set(out, i, array.get(callArr, i) - array.get(putArr, i))
+    out
+
+fmt2(v) =>
+    str.tostring(v, "#.##")
+
+fmtInt(v) =>
+    str.tostring(int(math.round(v)))
+
+scale_to_ref(arr, refMax_, weight) =>
+    n = array.size(arr)
+    ma = max_abs(arr)
+    out = array.new_float(n, 0.0)
+    if n > 0 and ma != 0.0 and refMax_ != 0.0
+        for i = 0 to n - 1
+            v = array.get(arr, i)
+            base = v / ma
+            array.set(out, i, base * refMax_ * weight)
+    out
+
+to_es_strike(srcStrike, ratio, snap5) =>
+    mapped = srcStrike * ratio
+    snap5 ? math.round(mapped / 5.0) * 5.0 : mapped
+
+add_to_map(_map, strike, exposure) =>
+    cur = map.contains(_map, strike) ? map.get(_map, strike) : 0.0
+    map.put(_map, strike, cur + exposure)
+
+// ================= Globals
+var exposureMap = map.new<float, float>()
+var callExpMap = map.new<float, float>()
+var putExpMap = map.new<float, float>()
+var float vixProp = na
+var float refMax = na
+
+// 10 essential metrics
+var float biasScoreLast = na
+var string gammaRegimeLast = "NA"
+var string vannaFlowLast = "NA"
+var float supportLevelLast = na
+var float resistLevelLast = na
+var float magnetLevelLast = na
+var bool magnetValidLast = true
+var string regimeLast = "NA"
+var float transitionStrikeLast = na
+var float pcRatioLast = na
+
+// Clear-language skew
+var string skewLast = "NA"
+var int skewDirLast = 0  // -1 = bearish/overhead, 0 = balanced, +1 = bullish/downside
+
+var float putWallDistLast = na
+var float callWallDistLast = na
+var float magnetDistLast = na
+var float pinIndexLast = na
+
+var linesArr = array.new_line()
+var labelsArr = array.new_label()
+var line putWallLine = na
+var line callWallLine = na
+var label putWallLabel = na
+var label callWallLabel = na
+var label magnetLabel = na
+
+// ================= Clear function for arrays only
+clear_arrays() =>
+    lnCount = array.size(linesArr)
+    if lnCount > 0
+        for i = 0 to lnCount - 1
+            line.delete(array.get(linesArr, i))
+    array.clear(linesArr)
+
+    lbCount = array.size(labelsArr)
+    if lbCount > 0
+        for j = 0 to lbCount - 1
+            label.delete(array.get(labelsArr, j))
+    array.clear(labelsArr)
+
+make_line(x1, y1, x2, y2, colr, wid) =>
+    ln = line.new(x1, y1, x2, y2, color=colr, width=wid)
+    array.push(linesArr, ln)
+
+make_label(x, y, txt, colr, tcolr) =>
+    lb = label.new(x, y, txt, style=label.style_label_left, color=colr, textcolor=tcolr, size=size.tiny)
+    array.push(labelsArr, lb)
+
+vixLevelGlobal = request.security(vixSymbol, "D", close)
+
+// ================= Rebuild
+var int _prevBuildKey = na
+_needRebuild = barstate.isfirst or (buildKey != _prevBuildKey)
+
+if _needRebuild
+    _prevBuildKey := buildKey
+    map.clear(exposureMap)
+    map.clear(callExpMap)
+    map.clear(putExpMap)
+
+    esK = csv_to_float_array(esStrikesCSV)
+    esC = csv_to_float_array(esCallsCSV)
+    esP = csv_to_float_array(esPutsCSV)
+
+    spxK = csv_to_float_array(spxStrikesCSV)
+    spxC = csv_to_float_array(spxCallsCSV)
+    spxP = csv_to_float_array(spxPutsCSV)
+
+    spyK = csv_to_float_array(spyStrikesCSV)
+    spyC = csv_to_float_array(spyCallsCSV)
+    spyP = csv_to_float_array(spyPutsCSV)
+
+    nqK = csv_to_float_array(nqStrikesCSV)
+    nqC = csv_to_float_array(nqCallsCSV)
+    nqP = csv_to_float_array(nqPutsCSV)
+
+    esNet = net_from(esC, esP)
+    spxNet = net_from(spxC, spxP)
+    spyNet = net_from(spyC, spyP)
+    nqNet = net_from(nqC, nqP)
+
+    refMax := math.max(1e-9, max_abs(esNet))
+
+    esScaled = scale_to_ref(esNet, refMax, wES)
+    spxScaled = scale_to_ref(spxNet, refMax, wSPX)
+    spyScaled = scale_to_ref(spyNet, refMax, wSPY)
+    nqScaled = scale_to_ref(nqNet, refMax, wNQ)
+
+    esCScaled = scale_to_ref(esC, refMax, wES)
+    esPScaled = scale_to_ref(esP, refMax, wES)
+    spxCScaled = scale_to_ref(spxC, refMax, wSPX)
+    spxPScaled = scale_to_ref(spxP, refMax, wSPX)
+    spyCScaled = scale_to_ref(spyC, refMax, wSPY)
+    spyPScaled = scale_to_ref(spyP, refMax, wSPY)
+    nqCScaled = scale_to_ref(nqC, refMax, wNQ)
+    nqPScaled = scale_to_ref(nqP, refMax, wNQ)
+
+    nES = math.min(array.size(esK), array.size(esScaled))
+    nSPX = math.min(array.size(spxK), array.size(spxScaled))
+    nSPY = math.min(array.size(spyK), array.size(spyScaled))
+    nNQ = math.min(array.size(nqK), array.size(nqScaled))
+
+    if nES > 0
+        for i = 0 to nES - 1
+            strike = array.get(esK, i)
+            add_to_map(exposureMap, strike, array.get(esScaled, i))
+            add_to_map(callExpMap, strike, array.get(esCScaled, i))
+            add_to_map(putExpMap, strike, array.get(esPScaled, i))
+
+    if nSPX > 0
+        for i = 0 to nSPX - 1
+            k = to_es_strike(array.get(spxK, i), spxToES, snapToES5)
+            add_to_map(exposureMap, k, array.get(spxScaled, i))
+            add_to_map(callExpMap, k, array.get(spxCScaled, i))
+            add_to_map(putExpMap, k, array.get(spxPScaled, i))
+
+    if nSPY > 0
+        for i = 0 to nSPY - 1
+            k = to_es_strike(array.get(spyK, i), spyToES, snapToES5)
+            add_to_map(exposureMap, k, array.get(spyScaled, i))
+            add_to_map(callExpMap, k, array.get(spyCScaled, i))
+            add_to_map(putExpMap, k, array.get(spyPScaled, i))
+
+    if nNQ > 0
+        for i = 0 to nNQ - 1
+            k = to_es_strike(array.get(nqK, i), nqToES, snapToES5)
+            add_to_map(exposureMap, k, array.get(nqScaled, i))
+            add_to_map(callExpMap, k, array.get(nqCScaled, i))
+            add_to_map(putExpMap, k, array.get(nqPScaled, i))
+
+    vC = csv_to_float_array(vixCallsCSV)
+    vP = csv_to_float_array(vixPutsCSV)
+    vNet = sum_arr(vP) - sum_arr(vC)
+    vTot = sum_abs_arr(vC) + sum_abs_arr(vP)
+    vixProp := vTot > 0.0 ? vNet / vTot : na
+
+// ================= Metrics + Drawing
+var bool profileDrawn = false
+if barstate.isnew
+    profileDrawn := false
+
+// IMPORTANT FIX: metrics update regardless of showProfile
+if barstate.islast and not profileDrawn
+    biasScoreLast := na
+    gammaRegimeLast := "NA"
+    vannaFlowLast := "NA"
+    supportLevelLast := na
+    resistLevelLast := na
+    magnetLevelLast := na
+    magnetValidLast := true
+    regimeLast := "NA"
+    transitionStrikeLast := na
+    pcRatioLast := na
+    skewLast := "NA"
+    skewDirLast := 0
+
+    putWallDistLast := na
+    callWallDistLast := na
+    magnetDistLast := na
+    pinIndexLast := na
+
+    // Clear arrays via function
+    clear_arrays()
+
+    // Clear wall/magnet drawings directly (not in function)
+    if not na(putWallLine)
+        line.delete(putWallLine)
+    putWallLine := na
+
+    if not na(callWallLine)
+        line.delete(callWallLine)
+    callWallLine := na
+
+    if not na(putWallLabel)
+        label.delete(putWallLabel)
+    putWallLabel := na
+
+    if not na(callWallLabel)
+        label.delete(callWallLabel)
+    callWallLabel := na
+
+    if not na(magnetLabel)
+        label.delete(magnetLabel)
+    magnetLabel := na
+
+    keys = map.keys(exposureMap)
+    array.sort(keys, order.ascending)
+    nK = array.size(keys)
+
+    curK = math.round(close / 5.0) * 5.0
+    useWin = showOnlyWindow
+    lowWin = curK - windowPts
+    highWin = curK + windowPts
+
+    maxExp = 0.0
+    if nK > 0
+        for i = 0 to nK - 1
+            k = array.get(keys, i)
+            inRng = not useWin or (k >= lowWin and k <= highWin)
+            if inRng
+                e = map.get(exposureMap, k)
+                maxExp := math.max(maxExp, math.abs(e))
+
+    float totalCallExp = 0.0
+    float totalPutExp = 0.0
+    float totalAbs = 0.0
+    float pinnedAbs = 0.0
+    float maxCallExp = 0.0
+    float maxPutExp = 0.0
+
+    float callExpAbove = 0.0
+    float callExpBelow = 0.0
+    float putExpAbove = 0.0
+    float putExpBelow = 0.0
+
+    float lastNetExp = na
+    float transitionK = na
+
+    if nK > 0
+        for i = 0 to nK - 1
+            k = array.get(keys, i)
+            inRng = not useWin or (k >= lowWin and k <= highWin)
+            if inRng
+                cExp = map.contains(callExpMap, k) ? map.get(callExpMap, k) : 0.0
+                pExp = map.contains(putExpMap, k) ? map.get(putExpMap, k) : 0.0
+                netE = map.get(exposureMap, k)
+
+                totalCallExp += cExp
+                totalPutExp += pExp
+                totalAbs += math.abs(netE)
+                maxCallExp := math.max(maxCallExp, cExp)
+                maxPutExp := math.max(maxPutExp, pExp)
+
+                if k > curK
+                    callExpAbove += cExp
+                    putExpAbove += pExp
+                else
+                    callExpBelow += cExp
+                    putExpBelow += pExp
+
+                if not na(lastNetExp) and lastNetExp < 0 and netE > 0
+                    transitionK := k
+                lastNetExp := netE
+
+                if math.abs(k - curK) <= pinRadiusPts
+                    pinnedAbs += math.abs(netE)
+
+    transitionStrikeLast := transitionK
+
+    if totalAbs > 0
+        pinIndexLast := (pinnedAbs / totalAbs) * 100.0
+
+    // === ROW 9: P/C RATIO ===
+    if totalCallExp > 0
+        pcRatioLast := totalPutExp / totalCallExp
+    else
+        pcRatioLast := na
+
+    // === ROW 10: SKEW (CLEAR LANGUAGE) ===
+    float overhead = callExpAbove + putExpAbove
+    float downside = callExpBelow + putExpBelow
+    float totalSkew = overhead + downside
+
+    if totalSkew > 0
+        float skewRatio = (downside - overhead) / totalSkew
+        float skewPct = skewRatio * 100.0
+
+        if skewRatio > 0.15
+            skewDirLast := 1
+            skewLast := "BULLISH (BELOW +" + fmtInt(skewPct) + "%)"
+        else if skewRatio < -0.15
+            skewDirLast := -1
+            skewLast := "BEARISH (ABOVE +" + fmtInt(math.abs(skewPct)) + "%)"
+        else
+            skewDirLast := 0
+            skewLast := "BALANCED"
+    else
+        skewDirLast := 0
+        skewLast := "N/A"
+
+    // === FIND WALLS AND MAGNET ===
+    float nearestPutWallBelow = na
+    float nearestPutWallDist = 1e10
+    float nearestCallWallAbove = na
+    float nearestCallWallDist = 1e10
+    float magnetK = na
+    float magnetE = 0.0
+
+    float callWallThr = maxCallExp * wallStrengthPct
+    float putWallThr = maxPutExp * wallStrengthPct
+
+    if nK > 0
+        for i = 0 to nK - 1
+            k = array.get(keys, i)
+            inRng = not useWin or (k >= lowWin and k <= highWin)
+            if inRng
+                cExp = map.contains(callExpMap, k) ? map.get(callExpMap, k) : 0.0
+                pExp = map.contains(putExpMap, k) ? map.get(putExpMap, k) : 0.0
+                netE = map.get(exposureMap, k)
+                absE = math.abs(netE)
+
+                if absE > magnetE
+                    magnetE := absE
+                    magnetK := k
+
+                if k < curK and pExp >= putWallThr
+                    dist = curK - k
+                    if dist < nearestPutWallDist
+                        nearestPutWallDist := dist
+                        nearestPutWallBelow := k
+
+                if k > curK and cExp >= callWallThr
+                    dist = k - curK
+                    if dist < nearestCallWallDist
+                        nearestCallWallDist := dist
+                        nearestCallWallAbove := k
+
+    supportLevelLast := nearestPutWallBelow
+    resistLevelLast := nearestCallWallAbove
+    magnetLevelLast := magnetK
+    putWallDistLast := not na(nearestPutWallBelow) ? curK - nearestPutWallBelow : na
+    callWallDistLast := not na(nearestCallWallAbove) ? nearestCallWallAbove - curK : na
+    magnetDistLast := not na(magnetK) ? magnetK - curK : na
+
+    // === BIAS SCORE ===
+    float transitionBias = 0.0
+    if not na(transitionK)
+        float distFromTrans = curK - transitionK
+        transitionBias := math.max(-1.0, math.min(1.0, distFromTrans / 50.0))
+
+    float wallBias = 0.0
+    if not na(putWallDistLast) and not na(callWallDistLast)
+        wallBias := (putWallDistLast - callWallDistLast) / (putWallDistLast + callWallDistLast)
+    else if not na(putWallDistLast) and na(callWallDistLast)
+        wallBias := 0.3
+    else if na(putWallDistLast) and not na(callWallDistLast)
+        wallBias := -0.3
+
+    float aboveBelowBias = 0.0
+    float totalAbove = callExpAbove + putExpAbove
+    float totalBelow = callExpBelow + putExpBelow
+    if totalAbove + totalBelow > 0
+        aboveBelowBias := (totalBelow - totalAbove) / (totalAbove + totalBelow)
+
+    float vixBias = 0.0
+    if not na(vixProp)
+        vixBias := -vixProp * 0.5
+
+    float rawBias = (transitionBias * 0.40) +
+         (wallBias * 0.30) +
+         (aboveBelowBias * 0.20) +
+         (vixBias * 0.10)
+
+    biasScoreLast := rawBias * 100.0
+
+    // === GAMMA REGIME ===
+    float netGammaScore = 0.0
+    if totalCallExp + totalPutExp > 0
+        float otmCallRatio = totalCallExp > 0 ? callExpAbove / totalCallExp : 0.5
+        float otmPutRatio = totalPutExp > 0 ? putExpBelow / totalPutExp : 0.5
+        netGammaScore := (otmCallRatio + otmPutRatio) / 2.0
+
+    if netGammaScore > 0.55
+        gammaRegimeLast := "SHORT γ AMPLIFY"
+    else if netGammaScore < 0.45
+        gammaRegimeLast := "LONG γ DAMPEN"
+    else
+        gammaRegimeLast := "NEUTRAL γ"
+
+    // === VANNA FLOW ===
+    if na(vixProp)
+        vannaFlowLast := "NO DATA"
+    else if vixProp > 0.10
+        vannaFlowLast := "↓ SELL FLOW"
+    else if vixProp < -0.10
+        vannaFlowLast := "↑ BUY FLOW"
+    else
+        vannaFlowLast := "NEUTRAL"
+
+    // === REGIME ===
+    float pinThresh = 40.0
+    bool isPinning = not na(pinIndexLast) and pinIndexLast >= pinThresh
+    bool isTrending = not na(pinIndexLast) and pinIndexLast < 25.0
+    bool isDefensive = not na(vixProp) and math.abs(vixProp) > 0.50
+    bool isBearish = biasScoreLast < -15
+    bool isBullish = biasScoreLast > 15
+
+    if isDefensive
+        regimeLast := "⚠ DEFENSIVE"
+    else if isPinning
+        regimeLast := "📌 PIN/RANGE"
+    else if isTrending and isBearish
+        regimeLast := "📉 TREND DOWN"
+    else if isTrending and isBullish
+        regimeLast := "📈 TREND UP"
+    else if isTrending
+        regimeLast := "📊 TREND"
+    else
+        regimeLast := "MIXED"
+
+    // === MAGNET FILTER LOGIC ===
+    if useMagFilter and not na(magnetLevelLast) and not na(biasScoreLast)
+        bool is_short_g = gammaRegimeLast == "SHORT γ AMPLIFY"
+        bool is_bull_m = magnetLevelLast > close
+        bool is_bear_m = magnetLevelLast < close
+
+        bool bias_ok_bull = biasScoreLast > -magBiasThresh
+        bool bias_ok_bear = biasScoreLast < magBiasThresh
+
+        if is_short_g
+            if is_bull_m and not bias_ok_bull
+                magnetValidLast := false
+            if is_bear_m and not bias_ok_bear
+                magnetValidLast := false
+
+    // === DRAW PROFILE (ONLY IF ENABLED) ===
+    if showProfile
+        float thr = 0.0
+        if useTopPercentile
+            mags = array.new_float()
+            for i = 0 to nK - 1
+                k = array.get(keys, i)
+                inRng = not useWin or (k >= lowWin and k <= highWin)
+                if inRng
+                    array.push(mags, math.abs(map.get(exposureMap, k)))
+            sizeM = array.size(mags)
+            if sizeM > 0
+                array.sort(mags, order.ascending)
+                q = 1.0 - topPercent / 100.0
+                idx = sizeM >= 2
+                     ? math.max(0, math.min(int(math.floor(q * (sizeM - 1))), sizeM - 1))
+                     : 0
+                thr := array.get(mags, idx)
+
+        int madeL = 0
+        int madeLab = 0
+        float lastHeavyK = na
+        float lastHeavyMag = 0.0
+
+        if maxExp > 0.0 and nK > 0
+            for i = 0 to nK - 1
+                if madeL >= 450 or madeLab >= 150
+                    break
+
+                k = array.get(keys, i)
+                inRng = not useWin or (k >= lowWin and k <= highWin)
+                if not inRng
+                    continue
+
+                e = map.get(exposureMap, k)
+                a = math.abs(e)
+
+                passF = useTopPercentile
+                     ? a >= thr
+                     : a > maxExp * minExposure
+
+                if clusterLines and passF and not na(lastHeavyK)
+                    if math.abs(k - lastHeavyK) <= clusterDistPts and a <= lastHeavyMag * clusterMinRatio
+                        passF := false
+
+                if passF
+                    f = a / maxExp
+                    rw = int(math.round(f * profileBars))
+                    lw = int(math.round(f * profileBarsLeft))
+                    o = int(math.round(80.0 - (f * 60.0)))
+                    o := o < 0 ? 0 : o > 100 ? 100 : o
+
+                    baseCol = e > 0.0 ? callColorBase : putColorBase
+                    lc = color.new(baseCol, o)
+
+                    if madeL < 450
+                        make_line(bar_index - lw, k, bar_index + rw, k, lc, 2)
+                        madeL += 1
+                        if a > maxExp * 0.55 and madeL < 450
+                            make_line(bar_index - 10, k, bar_index + 10, k, lc, 4)
+                            madeL += 1
+
+                    if a > maxExp * 0.75 and madeLab < 150
+                        make_label(bar_index + rw + 2, k,
+                             str.tostring(k) + (e > 0.0 ? " C" : " P"), lc, color.white)
+                        madeLab += 1
+
+                    lastHeavyK := k
+                    lastHeavyMag := a
+
+    // === DRAW WALLS (INDEPENDENT OF PROFILE TOGGLE) ===
+    if showWallLines
+        if not na(supportLevelLast)
+            putWallLine := line.new(bar_index - 50, supportLevelLast, bar_index + 20, supportLevelLast,
+                 color=color.new(color.red, 30), width=2, style=line.style_dashed)
+            putWallLabel := label.new(bar_index + 22, supportLevelLast,
+                 "SUPPORT " + fmtInt(supportLevelLast),
+                 style=label.style_label_left, color=color.new(color.red, 50),
+                 textcolor=color.white, size=size.small)
+
+        if not na(resistLevelLast)
+            callWallLine := line.new(bar_index - 50, resistLevelLast, bar_index + 20, resistLevelLast,
+                 color=color.new(color.lime, 30), width=2, style=line.style_dashed)
+            callWallLabel := label.new(bar_index + 22, resistLevelLast,
+                 "RESIST " + fmtInt(resistLevelLast),
+                 style=label.style_label_left, color=color.new(color.lime, 50),
+                 textcolor=color.white, size=size.small)
+
+        if not na(magnetLevelLast) and math.abs(magnetLevelLast - curK) <= windowPts
+            color magColor = magnetValidLast
+                 ? color.new(color.yellow, 30)
+                 : color.new(color.gray, 60)
+            color txtColor = magnetValidLast ? color.black : color.gray
+            string magTxt = magnetValidLast ? "⚡ MAGNET" : "⚡ FILTERED"
+
+            magnetLabel := label.new(bar_index - 55, magnetLevelLast, magTxt,
+                 style=label.style_label_right, color=magColor,
+                 textcolor=txtColor, size=size.small)
+
+    profileDrawn := true
+
+// ================= 10-ROW TABLE =================
+var table t = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 40))
+
+if barstate.islast
+    for i = 0 to 11
+        table.cell(t, 0, i, "", text_color=color.white, bgcolor=color.new(color.black, 40))
+        table.cell(t, 1, i, "", text_color=color.white, bgcolor=color.new(color.black, 40))
+
+    int r = 0
+
+    table.cell(t, 0, r, "OPTIONS FLOW", text_color=color.yellow, bgcolor=color.new(color.black, 20))
+    table.cell(t, 1, r, "TODAY", text_color=color.yellow, bgcolor=color.new(color.black, 20))
+    r += 1
+
+    // ROW 1: BIAS
+    table.cell(t, 0, r, "1. BIAS", text_color=color.white)
+    if na(biasScoreLast)
+        table.cell(t, 1, r, "N/A", text_color=color.gray)
+    else
+        string biasTxt = ""
+        color biasCol = color.gray
+        if biasScoreLast >= 30
+            biasTxt := "▲▲ BULL +" + fmtInt(biasScoreLast)
+            biasCol := color.lime
+        else if biasScoreLast >= 10
+            biasTxt := "▲ LEAN BULL +" + fmtInt(biasScoreLast)
+            biasCol := color.green
+        else if biasScoreLast <= -30
+            biasTxt := "▼▼ BEAR " + fmtInt(biasScoreLast)
+            biasCol := color.red
+        else if biasScoreLast <= -10
+            biasTxt := "▼ LEAN BEAR " + fmtInt(biasScoreLast)
+            biasCol := color.orange
+        else
+            biasTxt := "◆ NEUTRAL " + fmtInt(biasScoreLast)
+            biasCol := color.gray
+        table.cell(t, 1, r, biasTxt, text_color=biasCol)
+    r += 1
+
+    // ROW 2: GAMMA
+    table.cell(t, 0, r, "2. GAMMA", text_color=color.white)
+    color gammaCol = gammaRegimeLast == "SHORT γ AMPLIFY"
+         ? color.orange
+         : gammaRegimeLast == "LONG γ DAMPEN"
+             ? color.aqua
+             : color.gray
+    table.cell(t, 1, r, gammaRegimeLast, text_color=gammaCol)
+    r += 1
+
+    // ROW 3: VANNA
+    table.cell(t, 0, r, "3. VANNA", text_color=color.white)
+    color vannaCol = str.contains(vannaFlowLast, "↑")
+         ? color.lime
+         : str.contains(vannaFlowLast, "↓")
+             ? color.red
+             : color.gray
+    table.cell(t, 1, r, vannaFlowLast, text_color=vannaCol)
+    r += 1
+
+    // ROW 4: SUPPORT
+    table.cell(t, 0, r, "4. SUPPORT", text_color=color.white)
+    if na(supportLevelLast)
+        table.cell(t, 1, r, "NONE", text_color=color.gray)
+    else
+        string supTxt = fmtInt(supportLevelLast) + " (" + fmtInt(putWallDistLast) + "↓)"
+        table.cell(t, 1, r, supTxt, text_color=color.white)
+    r += 1
+
+    // ROW 5: RESIST
+    table.cell(t, 0, r, "5. RESIST", text_color=color.white)
+    if na(resistLevelLast)
+        table.cell(t, 1, r, "NONE", text_color=color.gray)
+    else
+        string resTxt = fmtInt(resistLevelLast) + " (" + fmtInt(callWallDistLast) + "↑)"
+        table.cell(t, 1, r, resTxt, text_color=color.white)
+    r += 1
+
+    // ROW 6: MAGNET
+    table.cell(t, 0, r, "6. MAGNET", text_color=color.white)
+    if na(magnetLevelLast)
+        table.cell(t, 1, r, "N/A", text_color=color.gray)
+    else
+        string magDir = magnetDistLast > 0 ? "↑" : magnetDistLast < 0 ? "↓" : "="
+        string magTxt = fmtInt(magnetLevelLast) + " (" + fmtInt(math.abs(magnetDistLast)) + magDir + ")"
+        color magCol = magnetValidLast ? color.white : color.gray
+        table.cell(t, 1, r, magTxt, text_color=magCol)
+    r += 1
+
+    // ROW 7: REGIME
+    table.cell(t, 0, r, "7. REGIME", text_color=color.white)
+    color regCol = str.contains(regimeLast, "DEFENSIVE")
+         ? color.red
+         : str.contains(regimeLast, "PIN")
+             ? color.purple
+             : str.contains(regimeLast, "DOWN")
+                 ? color.red
+                 : str.contains(regimeLast, "UP")
+                     ? color.lime
+                     : color.orange
+    table.cell(t, 1, r, regimeLast, text_color=regCol)
+    r += 1
+
+    // ROW 8: GEX FLIP
+    table.cell(t, 0, r, "8. GEX FLIP", text_color=color.white)
+    if na(transitionStrikeLast)
+        table.cell(t, 1, r, "N/A", text_color=color.gray)
+    else
+        string flipDir = close >= transitionStrikeLast ? " (SUP)" : " (RES)"
+        color flipCol = close >= transitionStrikeLast
+             ? color.new(color.aqua, 0)
+             : color.new(color.orange, 0)
+        table.cell(t, 1, r, fmtInt(transitionStrikeLast) + flipDir, text_color=flipCol)
+    r += 1
+
+    // ROW 9: P/C RATIO
+    table.cell(t, 0, r, "9. P/C RATIO", text_color=color.white)
+    if na(pcRatioLast)
+        table.cell(t, 1, r, "N/A", text_color=color.gray)
+    else
+        string pcTxt = ""
+        color pcCol = color.gray
+        if pcRatioLast >= 2.0
+            pcTxt := fmt2(pcRatioLast) + " BEARISH"
+            pcCol := color.red
+        else if pcRatioLast >= 1.3
+            pcTxt := fmt2(pcRatioLast) + " PUT HEAVY"
+            pcCol := color.orange
+        else if pcRatioLast <= 0.5
+            pcTxt := fmt2(pcRatioLast) + " BULLISH"
+            pcCol := color.lime
+        else if pcRatioLast <= 0.8
+            pcTxt := fmt2(pcRatioLast) + " CALL HEAVY"
+            pcCol := color.green
+        else
+            pcTxt := fmt2(pcRatioLast) + " NEUTRAL"
+            pcCol := color.gray
+        table.cell(t, 1, r, pcTxt, text_color=pcCol)
+    r += 1
+
+    // ROW 10: SKEW (CLEAR LANGUAGE)
+    table.cell(t, 0, r, "10. SKEW", text_color=color.white)
+    color skewCol = skewDirLast == 1
+         ? color.lime
+         : skewDirLast == -1
+             ? color.red
+             : color.gray
+    table.cell(t, 1, r, skewLast, text_color=skewCol)
+
+// ================= Background
+color bgCol = str.contains(regimeLast, "DEFENSIVE")
+     ? color.new(color.gray, 94)
+     : str.contains(regimeLast, "PIN")
+         ? color.new(color.purple, 92)
+         : str.contains(regimeLast, "DOWN")
+             ? color.new(color.red, 94)
+             : str.contains(regimeLast, "UP")
+                 ? color.new(color.teal, 92)
+                 : color.new(color.gray, 92)
+
+bgcolor(bgCol)
+plot(close, title="", color=color.new(color.white, 0), linewidth=2)
